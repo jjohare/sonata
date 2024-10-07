@@ -1,12 +1,6 @@
 [submodule "deps/sonic"]
 	path = deps/sonic
 	url = https://github.com/waywardgeek/sonic
-[submodule "deps/libtashkeel"]
-	path = deps/libtashkeel
-	url = https://github.com/mush42/libtashkeel
 [submodule "deps/espeak-ng"]
 	path = deps/espeak-ng
 	url = https://github.com/rhasspy/espeak-ng
-[submodule "deps/tqsm"]
-	path = deps/tqsm
-	url = https://github.com/mush42/tqsm

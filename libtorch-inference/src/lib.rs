@@ -1,6 +1,8 @@
 use ndarray::{ArrayD, IxDyn};
 use std::path::Path;
 use tch::{CModule, TchError, Tensor};
+use ort::{init, Session, CUDAExecutionProvider, SessionInputs, SessionOutputs, Value, TensorElementType, IntoTensorElementType};
+use std::sync::Arc;
 
 pub type LibtorchResult<T> = Result<T, LibtorchError>;
 
@@ -16,7 +18,7 @@ impl From<TchError> for LibtorchError {
     }
 }
 
-pub struct LibtorchInferenceSession(CModule);
+pub struct LibtorchInferenceSession(Session);
 
 impl LibtorchInferenceSession {
     pub fn from_path(model_path: impl AsRef<Path>) -> LibtorchResult<Self> {
@@ -26,43 +28,27 @@ impl LibtorchInferenceSession {
                 model_path.as_ref().display()
             )));
         }
-        let mut model = CModule::load(model_path)?;
-        model.f_set_eval()?;
-        Ok(Self(model))
+        let session = create_inference_session(model_path)?;
+        Ok(Self(session))
     }
+
     pub fn run(&self, inputs: &[Tensor]) -> LibtorchResult<LibtorchOutput> {
-        let output = self.0.forward_ts(inputs)?;
-        Ok(output.into())
+        let output = self.0.run(SessionInputs::from(inputs))?;
+        Ok(LibtorchOutput(output.into()))
     }
 }
 
-pub struct LibtorchOutput(Tensor);
+pub struct LibtorchOutput(Vec<Tensor>);
 
-impl<T: tch::kind::Element> TryFrom<LibtorchOutput> for ArrayD<T> {
-    type Error = LibtorchError;
-
-    fn try_from(output: LibtorchOutput) ->  LibtorchResult<Self> {
-        let t = output.0;
-        let num_elem = t.numel();
-        let mut vec = vec![T::ZERO; num_elem];
-        t.f_to_kind(T::KIND)?.f_copy_data(&mut vec, num_elem)?;
-        let shape: Vec<usize> = t.size().iter().map(|s| *s as usize).collect();
-        let array = ArrayD::from_shape_vec(IxDyn(&shape), vec).map_err(|_| {
-            LibtorchError::OperationError(
-                "Cannot convert output to ndarray Array. Invalid model output.".to_string(),
-            )
+impl LibtorchOutput {
+    pub fn try_into_array<T: tch::kind::Element>(self) -> LibtorchResult<ArrayD<T>> {
+        let tensor = self.0.into_iter().next().ok_or_else(|| {
+            LibtorchError::OperationError("No tensor found in output".to_string())
         })?;
+        let array = tensor.try_extract_tensor()?.to_owned();
         Ok(array)
     }
 }
-
-
-impl From<Tensor> for LibtorchOutput {
-    fn from(other: Tensor) -> Self {
-        Self(other)
-    }
-}
-
 
 #[cfg(test)]
 mod test {
@@ -81,6 +67,7 @@ mod test {
         let _array: ArrayD<f32> = output.try_into()?;
         Ok(())
     }
+
     #[test]
     fn test_with_ndarray_input() -> LibtorchResult<()> {
         let input = ndarray::Array1::<f32>::ones(32);
@@ -89,4 +76,14 @@ mod test {
         let _array: ArrayD<f32> = output.try_into()?;
         Ok(())
     }
+}
+
+fn create_inference_session(model_path: &Path) -> Result<Session, ort::Error> {
+    Session::builder()?
+        .with_execution_providers([
+            CUDAExecutionProvider::default().with_device_id(0).build()?,
+            // Add other execution providers as needed
+        ])?
+        .with_model_from_file(model_path)?
+        .commit()?
 }

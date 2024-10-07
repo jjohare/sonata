@@ -2,7 +2,7 @@ use espeak_phonemizer::text_to_phonemes;
 use libtashkeel_base::do_tashkeel;
 use ndarray::Axis;
 use ndarray::{Array, Array1, Array2, ArrayView, Dim, IxDynImpl};
-use ort::{Session, SessionInputs, SessionOutputs, Value};
+use ort::{init, Session, CUDAExecutionProvider, SessionInputs, SessionOutputs, Value, TensorElementType, IntoTensorElementType};
 use serde::Deserialize;
 use sonata_core::{
     Audio, AudioInfo, AudioSamples, AudioStreamIterator, Phonemes, SonataAudioResult, SonataError,
@@ -78,11 +78,12 @@ fn create_tashkeel_engine(
 
 fn create_inference_session(model_path: &Path) -> Result<ort::Session, ort::Error> {
     Session::builder()?
-        // .with_parallel_execution(true)?
-        // .with_inter_threads(16)?
-        // .with_optimization_level(ort::GraphOptimizationLevel::Level3)?
-        // .with_memory_pattern(false)?
-        .commit_from_file(model_path)
+        .with_execution_providers([
+            CUDAExecutionProvider::default().with_device_id(0).build()?,
+            // Add other execution providers as needed
+        ])?
+        .with_model_from_file(model_path)?
+        .commit()?
 }
 
 pub fn from_config_path(config_path: &Path) -> SonataResult<Arc<dyn SonataModel + Send + Sync>> {
